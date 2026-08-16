@@ -4,17 +4,18 @@
   "private": true,
   "description": "EasyTransfer P2P signaling server",
   "scripts": {
-    "dev": "npx tsx watch src/index.ts",
-    "start": "npx tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "tsx": "^4.20.3",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
+    "tsx": "^4.20.3",
     "typescript": "^5.9.2"
   }
 }
