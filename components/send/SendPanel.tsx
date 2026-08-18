@@ -74,7 +74,6 @@ export default function SendPanel() {
       let offset = 0;
 
       while (offset < arrayBuffer.byteLength) {
-        // Pause execution if the WebRTC Data Channel buffer is full
         while (channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
@@ -112,7 +111,6 @@ export default function SendPanel() {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
       ],
     });
     pcRef.current = pc;
@@ -142,13 +140,16 @@ export default function SendPanel() {
   useEffect(() => {
     const socket = new EasyTransferSocket({
       onConnected: (id) => console.log("Sender Socket Connected:", id),
-      onDevicesUpdated: (updatedDevices: Device[]) => setDevices(updatedDevices),
+      onDevicesUpdated: (updatedDevices: Device[]) => {
+        setDevices(updatedDevices);
+        // Clean up connected device if it disappeared from nearby list
+        if (connectedDevice && !updatedDevices.some((d) => d.id === connectedDevice.id)) {
+          resetAllState();
+        }
+      },
       onTransferResponse: (senderId, accepted) => {
-        if (accepted) {
-          // Initialize WebRTC connection ONLY AFTER receiver accepts request
-          if (connectedDevice) {
-            initializeWebRTC(connectedDevice.id);
-          }
+        if (accepted && connectedDevice) {
+          initializeWebRTC(connectedDevice.id);
         } else {
           if (pcRef.current) {
             pcRef.current.close();
@@ -176,10 +177,11 @@ export default function SendPanel() {
     socket.connect();
 
     return () => {
+      // Explicit socket cleanup prevents stale ghost devices on the server
       socket.disconnect();
       if (pcRef.current) pcRef.current.close();
     };
-  }, [connectedDevice, initializeWebRTC]);
+  }, [connectedDevice, initializeWebRTC, resetAllState]);
 
   const generateVerificationCode = () => {
     if (!connectedDevice || files.length === 0) return;
@@ -190,7 +192,6 @@ export default function SendPanel() {
 
     const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
-    // Send transfer request via socket signaling
     socketRef.current?.sendTransferRequest(connectedDevice.id, {
       fileName: files[0].name,
       fileSize: totalBytes,
@@ -226,7 +227,6 @@ export default function SendPanel() {
     return `${(bytes / Math.pow(1024, unitIndex)).toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
-  // 1. DECLINED POPUP SCREEN
   if (showDeclinedModal) {
     return (
       <div className="w-full rounded-[12px] border border-[#EF4444]/70 bg-[#111A2E] px-8 py-16 text-center">
@@ -246,7 +246,6 @@ export default function SendPanel() {
     );
   }
 
-  // 2. COMPLETED TRANSFER SCREEN
   if (isCompleted) {
     return (
       <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-16 text-center">
@@ -266,7 +265,6 @@ export default function SendPanel() {
     );
   }
 
-  // 3. WAITING FOR CODE / TRANSFERRING SCREEN
   if (verificationCode) {
     return (
       <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-16 text-center">
@@ -317,7 +315,6 @@ export default function SendPanel() {
     );
   }
 
-  // 4. CONNECTED DEVICE / FILE SELECTOR
   if (connectedDevice) {
     return (
       <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-10 sm:px-12 sm:py-12">
@@ -434,7 +431,6 @@ export default function SendPanel() {
     );
   }
 
-  // 5. NEARBY DEVICES SCREEN
   return (
     <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-16 text-center">
       <h2 className="text-[29px] font-semibold text-white">Nearby Devices</h2>
