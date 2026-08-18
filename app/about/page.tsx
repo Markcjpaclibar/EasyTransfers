@@ -12,7 +12,7 @@ import {
   Lock,
   ArrowRight,
   ShieldCheck,
-  Github,
+  Code2, // Replaced Github with Code2 or Globe
 } from "lucide-react";
 
 const steps = [

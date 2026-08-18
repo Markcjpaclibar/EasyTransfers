@@ -20,7 +20,7 @@ export default function Footer() {
           </Link>
 
           <Link
-            href="#"
+            href="09569378612"
             aria-label="Phone"
             className="text-[#94A3B8] transition-all duration-200 hover:-translate-y-1 hover:text-[#22D3EE]"
           >
@@ -28,7 +28,7 @@ export default function Footer() {
           </Link>
 
           <Link
-            href="#"
+            href="markcjpaclibarcareer@gmail.com"
             aria-label="Email"
             className="text-[#94A3B8] transition-all duration-200 hover:-translate-y-1 hover:text-[#22D3EE]"
           >
