@@ -57,17 +57,14 @@ export class EasyTransferSocket {
 
     this.isManuallyClosed = false;
 
-    // Resolve URL with fallback dynamically
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host =
-      window.location.hostname === "0.0.0.0"
-        ? "localhost"
-        : window.location.hostname || "localhost";
-    const port = process.env.NEXT_PUBLIC_WS_PORT || "3001";
-    const defaultUrl = `${protocol}//${host}:${port}`;
+    // Resolve URL with production default fallback
+    const defaultUrl = "wss://easytransfers.onrender.com";
 
     const serverUrl =
-      this.options.url || process.env.NEXT_PUBLIC_WS_URL || defaultUrl;
+      this.options.url ||
+      process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL ||
+      process.env.NEXT_PUBLIC_WS_URL ||
+      defaultUrl;
 
     console.log("[EasyTransfer] Connecting to WebSocket server:", serverUrl);
 
