@@ -1,73 +1,98 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Download, CheckCircle, ShieldAlert } from "lucide-react";
-import { EasyTransferSocket } from "@/lib/websocket";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { EasyTransferSocket, Device } from "@/lib/websocket";
+import { MonitorSmartphone, CheckCircle } from "lucide-react";
 
-type TransferRequest = {
-  senderId: string;
-  fileName: string;
-  fileSize: number;
-  fileType: string;
-  totalFiles: number;
-  code: string;
+type IncomingMetadata = {
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
+  totalFiles?: number;
+  senderName?: string;
+  code?: string;
+};
+
+type ActiveFile = {
+  name: string;
+  size: number;
+  type: string;
 };
 
 export default function ReceivePanel() {
-  const [transferRequest, setTransferRequest] = useState<TransferRequest | null>(null);
-  const [pin, setPin] = useState(["", "", "", ""]);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [transferProgress, setTransferProgress] = useState<number | null>(null);
-  const [currentFileName, setCurrentFileName] = useState<string>("");
+  const [me, setMe] = useState<Device | null>(null);
+  const [senderId, setSenderId] = useState<string | null>(null);
+  const [requestMeta, setRequestMeta] = useState<IncomingMetadata | null>(null);
+
+  const [pin, setPin] = useState<string[]>(["", "", "", ""]);
+  const [expectedCode, setExpectedCode] = useState<string | null>(null);
+  const [pinError, setPinError] = useState(false);
+
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [currentFile, setCurrentFile] = useState<ActiveFile | null>(null);
+  const [progress, setProgress] = useState<number>(0);
   const [isCompleted, setIsCompleted] = useState(false);
 
+  const pinInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const socketRef = useRef<EasyTransferSocket | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
 
+  const activeFileRef = useRef<ActiveFile | null>(null);
   const receivedChunksRef = useRef<ArrayBuffer[]>([]);
-  const currentFileMetaRef = useRef<{ name: string; size: number; fileType: string } | null>(null);
-  const receivedBytesRef = useRef<number>(0);
+  const receivedSizeRef = useRef<number>(0);
+  const pendingOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
+  const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
 
-  const resetAllState = useCallback(() => {
-    setTransferRequest(null);
-    setPin(["", "", "", ""]);
-    setErrorMsg("");
-    setTransferProgress(null);
-    setCurrentFileName("");
-    setIsCompleted(false);
-    receivedChunksRef.current = [];
-    currentFileMetaRef.current = null;
-    receivedBytesRef.current = 0;
+  const downloadCurrentFile = () => {
+    const file = activeFileRef.current;
+    if (!file || receivedChunksRef.current.length === 0) return;
 
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-  }, []);
-
-  const triggerDownload = (blob: Blob, fileName: string) => {
+    const blob = new Blob(receivedChunksRef.current, {
+      type: file.type || "application/octet-stream",
+    });
     const url = URL.createObjectURL(blob);
+
     const a = document.createElement("a");
     a.href = url;
-    a.download = fileName;
+    a.download = file.name || "downloaded-file";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    receivedChunksRef.current = [];
+    receivedSizeRef.current = 0;
+    activeFileRef.current = null;
   };
 
-  const setupWebRTC = useCallback((senderId: string) => {
+  const processBufferedCandidates = async () => {
+    if (!pcRef.current || !pcRef.current.remoteDescription) return;
+    while (iceCandidatesQueueRef.current.length > 0) {
+      const candidate = iceCandidatesQueueRef.current.shift();
+      if (candidate) {
+        try {
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.error("Error adding queued ICE candidate:", err);
+        }
+      }
+    }
+  };
+
+  const createPeerConnection = useCallback((targetSenderId: string) => {
+    if (pcRef.current) return pcRef.current;
+
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
       ],
     });
-    pcRef.current = pc;
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
-        socketRef.current.sendSignal(senderId, {
+        socketRef.current.sendSignal(targetSenderId, {
           type: "candidate",
           candidate: event.candidate,
         });
@@ -75,59 +100,107 @@ export default function ReceivePanel() {
     };
 
     pc.ondatachannel = (event) => {
-      const channel = event.channel;
-      channel.binaryType = "arraybuffer";
+      const receiveChannel = event.channel;
+      receiveChannel.binaryType = "arraybuffer";
 
-      channel.onmessage = (e) => {
+      receiveChannel.onmessage = (e) => {
         if (typeof e.data === "string") {
-          const msg = JSON.parse(e.data);
+          try {
+            const frame = JSON.parse(e.data);
 
-          if (msg.type === "file-start") {
-            currentFileMetaRef.current = { name: msg.name, size: msg.size, fileType: msg.fileType };
-            setCurrentFileName(msg.name);
-            receivedChunksRef.current = [];
-            receivedBytesRef.current = 0;
-            setTransferProgress(0);
-          } else if (msg.type === "file-end") {
-            const blob = new Blob(receivedChunksRef.current, {
-              type: currentFileMetaRef.current?.fileType || "application/octet-stream",
-            });
-            triggerDownload(blob, currentFileMetaRef.current?.name || "downloaded-file");
-          } else if (msg.type === "transfer-complete") {
-            setIsCompleted(true);
+            if (frame.type === "file-start") {
+              const fileData = {
+                name: frame.name,
+                size: frame.size,
+                type: frame.fileType,
+              };
+              activeFileRef.current = fileData;
+              setCurrentFile(fileData);
+              receivedChunksRef.current = [];
+              receivedSizeRef.current = 0;
+              setProgress(0);
+            } else if (frame.type === "file-end") {
+              downloadCurrentFile();
+            } else if (frame.type === "transfer-complete") {
+              setIsTransferring(false);
+              setIsCompleted(true);
+            }
+          } catch (err) {
+            console.error("Frame parse error:", err);
           }
-        } else if (e.data instanceof ArrayBuffer) {
-          receivedChunksRef.current.push(e.data);
-          receivedBytesRef.current += e.data.byteLength;
-
-          if (currentFileMetaRef.current && currentFileMetaRef.current.size > 0) {
-            const pct = Math.min(
-              100,
-              Math.round((receivedBytesRef.current / currentFileMetaRef.current.size) * 100)
-            );
-            setTransferProgress(pct);
-          }
+          return;
         }
+
+        const chunk = e.data as ArrayBuffer;
+        receivedChunksRef.current.push(chunk);
+        receivedSizeRef.current += chunk.byteLength;
+
+        const totalSize = activeFileRef.current?.size || 1;
+        const currentProgress = Math.min(
+          100,
+          Math.round((receivedSizeRef.current / totalSize) * 100)
+        );
+        setProgress(currentProgress);
       };
     };
+
+    pcRef.current = pc;
+    return pc;
+  }, []);
+
+  const resetAllState = useCallback(() => {
+    setRequestMeta(null);
+    setSenderId(null);
+    setPin(["", "", "", ""]);
+    setPinError(false);
+    setIsTransferring(false);
+    setProgress(0);
+    setIsCompleted(false);
+    setCurrentFile(null);
+
+    receivedChunksRef.current = [];
+    receivedSizeRef.current = 0;
+    activeFileRef.current = null;
+    pendingOfferRef.current = null;
+    iceCandidatesQueueRef.current = [];
+
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
     const socket = new EasyTransferSocket({
       onConnected: (id) => console.log("Receiver Socket Connected:", id),
-      onTransferRequest: (senderId, requestData) => {
-        setTransferRequest({ senderId, ...requestData });
-      },
-      onSignal: async (senderId, signalData: any) => {
-        if (!pcRef.current) return;
+      onRegistered: (device) => setMe(device),
+      onTransferRequest: (fromId, metadata: any) => {
+        setSenderId(fromId);
+        setRequestMeta({
+          fileName: metadata.fileName || "File",
+          fileSize: metadata.fileSize || 0,
+          fileType: metadata.fileType || "application/octet-stream",
+          totalFiles: metadata.totalFiles || 1,
+          senderName: metadata.senderName || "Sender Device",
+        });
 
+        if (metadata.code) {
+          setExpectedCode(String(metadata.code));
+        }
+      },
+      onSignal: async (fromId, signalData: any) => {
         if (signalData.type === "offer") {
-          await pcRef.current.setRemoteDescription(new RTCSessionDescription(signalData));
-          const answer = await pcRef.current.createAnswer();
-          await pcRef.current.setLocalDescription(answer);
-          socketRef.current?.sendSignal(senderId, answer);
+          pendingOfferRef.current = signalData;
+          if (pcRef.current) {
+            await pcRef.current.setRemoteDescription(new RTCSessionDescription(signalData));
+            await processBufferedCandidates();
+          }
         } else if (signalData.type === "candidate") {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+          if (pcRef.current && pcRef.current.remoteDescription) {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+          } else {
+            iceCandidatesQueueRef.current.push(signalData.candidate);
+          }
         }
       },
       onError: (err) => console.error("Receiver Socket Error:", err),
@@ -137,148 +210,214 @@ export default function ReceivePanel() {
     socket.connect();
 
     return () => {
-      // Disconnecting the socket immediately purges the mobile device from "Nearby Devices"
       socket.disconnect();
-      if (pcRef.current) pcRef.current.close();
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
     };
   }, []);
 
+  const startWebRTCAndAccept = async (targetSenderId: string) => {
+    const pc = createPeerConnection(targetSenderId);
+
+    // Tell the sender we accepted
+    socketRef.current?.sendTransferResponse(targetSenderId, true);
+
+    if (pendingOfferRef.current) {
+      if (!pc.remoteDescription) {
+        await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
+      }
+      await processBufferedCandidates();
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socketRef.current?.sendSignal(targetSenderId, answer);
+    }
+  };
+
   const handlePinChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
+    setPinError(false);
+
     const newPin = [...pin];
     newPin[index] = value.slice(-1);
     setPin(newPin);
 
     if (value && index < 3) {
-      const nextInput = document.getElementById(`pin-${index + 1}`);
-      nextInput?.focus();
+      pinInputRefs.current[index + 1]?.focus();
     }
   };
 
-  const verifyAndAccept = () => {
-    if (!transferRequest) return;
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace" && !pin[index] && index > 0) {
+      pinInputRefs.current[index - 1]?.focus();
+    }
+  };
 
-    const enteredCode = pin.join("");
-    if (enteredCode !== transferRequest.code) {
-      setErrorMsg("Incorrect security code");
+  const handleAccept = async () => {
+    const enteredPin = pin.join("");
+    if (enteredPin.length < 4 || (expectedCode && enteredPin !== expectedCode)) {
+      setPinError(true);
       return;
     }
 
-    setErrorMsg("");
-    setupWebRTC(transferRequest.senderId);
-    socketRef.current?.sendTransferResponse(transferRequest.senderId, true);
-    setTransferProgress(0);
+    setIsTransferring(true);
+    if (senderId) {
+      await startWebRTCAndAccept(senderId);
+    }
   };
 
-  const declineTransfer = () => {
-    if (transferRequest) {
-      socketRef.current?.sendTransferResponse(transferRequest.senderId, false);
+  const handleDecline = () => {
+    if (senderId) {
+      socketRef.current?.sendTransferResponse(senderId, false);
     }
     resetAllState();
   };
 
   const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return "0 Bytes";
+    if (!bytes || bytes === 0) return "0 Bytes";
     const units = ["Bytes", "KB", "MB", "GB"];
     const unitIndex = Math.floor(Math.log(bytes) / Math.log(1024));
     return `${(bytes / Math.pow(1024, unitIndex)).toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
-  if (isCompleted) {
-    return (
-      <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-16 text-center">
-        <CheckCircle className="mx-auto text-[#34D399]" size={56} />
-        <h2 className="mt-4 text-[24px] font-semibold text-white">Files Received!</h2>
-        <p className="mt-2 text-[14px] text-[#94A3B8]">
-          The file transfers are complete and downloaded to your device.
-        </p>
-        <button
-          type="button"
-          onClick={resetAllState}
-          className="mt-8 rounded-[6px] bg-[#34D399] px-8 py-3 text-[14px] font-semibold text-[#111A2E] hover:bg-[#2eb885]"
-        >
-          Done
-        </button>
-      </div>
-    );
-  }
-
-  if (transferProgress !== null) {
-    return (
-      <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-16 text-center">
-        <h2 className="text-[25px] font-semibold text-white">Receiving File...</h2>
-        <div className="mt-8 mx-auto max-w-[450px] rounded-[10px] bg-[#15303D] p-6 text-left">
-          <p className="truncate text-sm font-semibold text-white">
-            {currentFileName || "Preparing file..."}
-          </p>
-          <div className="mt-3 flex justify-between text-xs text-[#94A3B8]">
-            <span>Progress</span>
-            <span className="font-bold text-[#34D399]">{transferProgress}%</span>
-          </div>
-          <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-[#111A2E]">
-            <div
-              className="h-full bg-[#34D399] transition-all duration-150"
-              style={{ width: `${transferProgress}%` }}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (transferRequest) {
-    return (
-      <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-12 text-center sm:px-12">
-        <h2 className="text-[25px] font-semibold text-white">Incoming Transfer</h2>
-        <p className="mt-2 text-[14px] text-[#94A3B8]">
-          {transferRequest.totalFiles} file(s) · {formatFileSize(transferRequest.fileSize)}
-        </p>
-
-        <div className="mt-8">
-          <p className="text-xs text-[#94A3B8]">Enter Security PIN from sender screen:</p>
-          <div className="mt-4 flex justify-center gap-3">
-            {pin.map((digit, index) => (
-              <input
-                key={index}
-                id={`pin-${index}`}
-                type="text"
-                maxLength={1}
-                value={digit}
-                onChange={(e) => handlePinChange(index, e.target.value)}
-                className="h-12 w-12 rounded-md bg-[#15303D] text-center text-xl font-bold text-[#34D399] border border-[#34D399]/30 focus:border-[#34D399] focus:outline-none"
-              />
-            ))}
-          </div>
-          {errorMsg && <p className="mt-3 text-xs text-[#EF4444]">{errorMsg}</p>}
-        </div>
-
-        <div className="mt-8 flex justify-center gap-4">
-          <button
-            type="button"
-            onClick={declineTransfer}
-            className="rounded-[6px] border border-[#EF4444]/50 bg-[#15303D] px-6 py-2.5 text-xs text-[#EF4444] hover:bg-[#1f2430]"
-          >
-            Decline
-          </button>
-          <button
-            type="button"
-            onClick={verifyAndAccept}
-            className="rounded-[6px] bg-[#34D399] px-6 py-2.5 text-xs font-semibold text-[#111A2E] hover:bg-[#2eb885]"
-          >
-            Accept & Download
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="w-full rounded-[12px] border border-[#34D399]/70 bg-[#111A2E] px-8 py-20 text-center">
-      <Download size={42} className="mx-auto text-[#34D399]" />
-      <h2 className="mt-6 text-[25px] font-semibold text-white">Ready to Receive</h2>
-      <p className="mt-2 text-xs text-[#94A3B8]">
-        Keep this tab open. Select this device on the sending phone or computer to begin.
-      </p>
+    <div className="flex w-full flex-col items-center justify-center font-sans">
+      <div className="relative flex min-h-[480px] w-full max-w-[850px] flex-col items-center justify-center rounded-[16px] border border-[#00B4D8]/30 bg-[#070D1B] p-8 shadow-2xl">
+        <div className="absolute top-8 flex flex-col items-center text-center">
+          <span className="text-[11px] font-semibold tracking-wider text-[#4E627B] uppercase">
+            YOUR DEVICE ID
+          </span>
+          <span className="mt-1 text-[22px] font-bold text-[#00E5FF]">
+            {me?.name || "Desktop PC"}
+          </span>
+        </div>
+
+        {requestMeta && !isCompleted && (
+          <div className="mt-16 w-full max-w-[600px] rounded-[16px] border border-[#00B4D8]/50 bg-[#0A1628] p-8 text-white shadow-2xl">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center text-[#00E5FF]">
+                <MonitorSmartphone size={40} strokeWidth={1.5} />
+              </div>
+              <div>
+                <h2 className="text-[22px] font-bold leading-none text-white">
+                  {requestMeta.senderName || "Sender Device"}
+                </h2>
+                <p className="mt-1 text-[12px] text-[#8EA0B5]">Wants to send you files</p>
+              </div>
+            </div>
+
+            <div className="mt-7 grid grid-cols-2 gap-4">
+              <div className="flex flex-col items-center justify-center rounded-[12px] bg-[#112238] py-4 text-center">
+                <span className="text-[11px] font-medium text-[#8EA0B5]">Total Files</span>
+                <span className="mt-1 text-[20px] font-bold text-white">
+                  {requestMeta.totalFiles || 1}
+                </span>
+              </div>
+              <div className="flex flex-col items-center justify-center rounded-[12px] bg-[#112238] py-4 text-center">
+                <span className="text-[11px] font-medium text-[#8EA0B5]">Total Size</span>
+                <span className="mt-1 text-[20px] font-bold text-white">
+                  {formatFileSize(requestMeta.fileSize || 0)}
+                </span>
+              </div>
+            </div>
+
+            {!isTransferring ? (
+              <div className="mt-7 text-center">
+                <p className="text-[12px] text-[#8EA0B5]">
+                  Enter the 4-digit PIN shown on the sender's device:
+                </p>
+
+                <div className="mx-auto mt-4 flex max-w-[460px] items-center justify-center rounded-[12px] bg-[#112238] px-6 py-3">
+                  <div className="flex gap-4">
+                    {pin.map((digit, idx) => (
+                      <input
+                        key={idx}
+                        ref={(el) => {
+                          pinInputRefs.current[idx] = el;
+                        }}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={1}
+                        value={digit}
+                        onChange={(e) => handlePinChange(idx, e.target.value)}
+                        onKeyDown={(e) => handleKeyDown(idx, e)}
+                        className={`h-10 w-10 text-center text-[20px] font-bold text-[#00E5FF] bg-[#070D1B] border rounded-[8px] focus:outline-none transition-all ${
+                          pinError
+                            ? "border-[#FF5252]"
+                            : "border-[#00B4D8]/40 focus:border-[#00E5FF]"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {pinError && (
+                  <p className="mt-2 text-[11px] text-[#FF5252]">
+                    Invalid Security PIN. Please check sender's screen.
+                  </p>
+                )}
+
+                <div className="mt-8 grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={handleDecline}
+                    className="rounded-[10px] border border-[#721C24] bg-[#220B13] py-3 text-[14px] font-medium text-[#FF6B6B] transition-all hover:bg-[#34111D]"
+                  >
+                    Decline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAccept}
+                    className="rounded-[10px] border border-[#00B4D8] bg-[#0E3342] py-3 text-[14px] font-medium text-[#00E5FF] transition-all hover:bg-[#124256]"
+                  >
+                    Accept
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-8 text-center">
+                <p className="truncate text-xs font-semibold text-white">
+                  {currentFile?.name || "Receiving file..."}
+                </p>
+                <div className="mt-3 flex justify-between text-[13px] font-medium text-[#8EA0B5]">
+                  <span>Progress</span>
+                  <span className="text-[#00E5FF]">{progress}%</span>
+                </div>
+                <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-[#112238]">
+                  <div
+                    className="h-full bg-[#00E5FF] transition-all duration-200"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isCompleted && (
+          <div className="mt-16 flex w-full max-w-[420px] flex-col items-center rounded-[16px] border border-[#00B4D8]/50 bg-[#0A1628] p-8 text-center shadow-2xl">
+            <CheckCircle className="text-[#00E5FF]" size={52} />
+            <h2 className="mt-3 text-[20px] font-bold text-white">Transfer Complete!</h2>
+            <p className="mt-1 text-[13px] text-[#8EA0B5]">
+              All files have been saved to your downloads
+            </p>
+            <button
+              type="button"
+              onClick={resetAllState}
+              className="mt-6 w-full rounded-[10px] border border-[#00B4D8] bg-[#0E3342] py-2.5 text-[14px] font-medium text-[#00E5FF] hover:bg-[#124256]"
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {!requestMeta && !isCompleted && (
+          <div className="mt-20 text-center text-[13px] text-[#4E627B]">
+            Waiting for incoming transfer requests on your network...
+          </div>
+        )}
+      </div>
     </div>
   );
 }
