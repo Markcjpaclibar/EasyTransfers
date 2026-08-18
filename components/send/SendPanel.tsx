@@ -21,8 +21,8 @@ type Device = {
   browser: string;
 };
 
-const CHUNK_SIZE = 16384;
-const BUFFERED_AMOUNT_LOW_THRESHOLD = 65536;
+const CHUNK_SIZE = 16384; // 16KB
+const MAX_BUFFERED_AMOUNT = 65536; // 64KB
 
 export default function SendPanel() {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -72,36 +72,25 @@ export default function SendPanel() {
 
       const arrayBuffer = await file.arrayBuffer();
       let offset = 0;
-      channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD;
 
-      return new Promise<void>((resolve) => {
-        const sendChunks = () => {
-          while (offset < arrayBuffer.byteLength) {
-            if (channel.bufferedAmount > channel.bufferedAmountLowThreshold) {
-              channel.onbufferedamountlow = () => {
-                channel.onbufferedamountlow = null;
-                sendChunks();
-              };
-              return;
-            }
+      while (offset < arrayBuffer.byteLength) {
+        // Pause execution if the WebRTC Data Channel buffer is full
+        while (channel.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
 
-            const chunk = arrayBuffer.slice(offset, offset + CHUNK_SIZE);
-            channel.send(chunk);
-            offset += chunk.byteLength;
+        const chunk = arrayBuffer.slice(offset, offset + CHUNK_SIZE);
+        channel.send(chunk);
+        offset += chunk.byteLength;
 
-            const progress = Math.min(
-              100,
-              Math.round((offset / arrayBuffer.byteLength) * 100)
-            );
-            setTransferProgress(progress);
-          }
+        const progress = Math.min(
+          100,
+          Math.round((offset / arrayBuffer.byteLength) * 100)
+        );
+        setTransferProgress(progress);
+      }
 
-          channel.send(JSON.stringify({ type: "file-end", name: file.name }));
-          resolve();
-        };
-
-        sendChunks();
-      });
+      channel.send(JSON.stringify({ type: "file-end", name: file.name }));
     },
     []
   );
@@ -118,12 +107,49 @@ export default function SendPanel() {
     setIsCompleted(true);
   }, [files, sendFileWithBackpressure]);
 
+  const initializeWebRTC = useCallback(async (targetDeviceId: string) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+      ],
+    });
+    pcRef.current = pc;
+
+    const dataChannel = pc.createDataChannel("fileTransfer", { ordered: true });
+    dataChannel.binaryType = "arraybuffer";
+    dataChannelRef.current = dataChannel;
+
+    dataChannel.onopen = () => {
+      startFileTransfer();
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.sendSignal(targetDeviceId, {
+          type: "candidate",
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socketRef.current?.sendSignal(targetDeviceId, offer);
+  }, [startFileTransfer]);
+
   useEffect(() => {
     const socket = new EasyTransferSocket({
       onConnected: (id) => console.log("Sender Socket Connected:", id),
       onDevicesUpdated: (updatedDevices: Device[]) => setDevices(updatedDevices),
       onTransferResponse: (senderId, accepted) => {
-        if (!accepted) {
+        if (accepted) {
+          // Initialize WebRTC connection ONLY AFTER receiver accepts request
+          if (connectedDevice) {
+            initializeWebRTC(connectedDevice.id);
+          }
+        } else {
           if (pcRef.current) {
             pcRef.current.close();
             pcRef.current = null;
@@ -153,38 +179,7 @@ export default function SendPanel() {
       socket.disconnect();
       if (pcRef.current) pcRef.current.close();
     };
-  }, []);
-
-  const initializeWebRTC = async (targetDeviceId: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
-    pcRef.current = pc;
-
-    const dataChannel = pc.createDataChannel("fileTransfer", { ordered: true });
-    dataChannel.binaryType = "arraybuffer";
-    dataChannelRef.current = dataChannel;
-
-    dataChannel.onopen = () => {
-      startFileTransfer();
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current) {
-        socketRef.current.sendSignal(targetDeviceId, {
-          type: "candidate",
-          candidate: event.candidate,
-        });
-      }
-    };
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socketRef.current?.sendSignal(targetDeviceId, offer);
-  };
+  }, [connectedDevice, initializeWebRTC]);
 
   const generateVerificationCode = () => {
     if (!connectedDevice || files.length === 0) return;
@@ -195,6 +190,7 @@ export default function SendPanel() {
 
     const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
+    // Send transfer request via socket signaling
     socketRef.current?.sendTransferRequest(connectedDevice.id, {
       fileName: files[0].name,
       fileSize: totalBytes,
@@ -202,8 +198,6 @@ export default function SendPanel() {
       totalFiles: files.length,
       code: code,
     });
-
-    initializeWebRTC(connectedDevice.id);
   };
 
   const addFiles = (selectedFiles: FileList | null) => {
