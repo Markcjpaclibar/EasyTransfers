@@ -21,8 +21,8 @@ type Device = {
   browser: string;
 };
 
-const CHUNK_SIZE = 16384; // 16KB
-const MAX_BUFFERED_AMOUNT = 65536; // 64KB
+const CHUNK_SIZE = 64 * 1024; // 64KB optimal chunk size
+const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024; // 8MB backpressure limit
 
 export default function SendPanel() {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -41,6 +41,18 @@ export default function SendPanel() {
   const socketRef = useRef<EasyTransferSocket | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
+
+  // Sync state to Refs to eliminate React async closure traps
+  const filesRef = useRef<File[]>([]);
+  const connectedDeviceRef = useRef<Device | null>(null);
+
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+
+  useEffect(() => {
+    connectedDeviceRef.current = connectedDevice;
+  }, [connectedDevice]);
 
   const resetAllState = useCallback(() => {
     setVerificationCode(null);
@@ -94,62 +106,75 @@ export default function SendPanel() {
     []
   );
 
-  const startFileTransfer = useCallback(async () => {
-    const channel = dataChannelRef.current;
-    if (!channel || channel.readyState !== "open") return;
+  const startFileTransfer = useCallback(
+    async (channel: RTCDataChannel) => {
+      const currentFiles = filesRef.current;
+      if (currentFiles.length === 0) return;
 
-    for (const file of files) {
-      await sendFileWithBackpressure(file, channel);
-    }
-
-    channel.send(JSON.stringify({ type: "transfer-complete" }));
-    setIsCompleted(true);
-  }, [files, sendFileWithBackpressure]);
-
-  const initializeWebRTC = useCallback(async (targetDeviceId: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
-    pcRef.current = pc;
-
-    const dataChannel = pc.createDataChannel("fileTransfer", { ordered: true });
-    dataChannel.binaryType = "arraybuffer";
-    dataChannelRef.current = dataChannel;
-
-    dataChannel.onopen = () => {
-      startFileTransfer();
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current) {
-        socketRef.current.sendSignal(targetDeviceId, {
-          type: "candidate",
-          candidate: event.candidate,
-        });
+      for (const file of currentFiles) {
+        await sendFileWithBackpressure(file, channel);
       }
-    };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socketRef.current?.sendSignal(targetDeviceId, offer);
-  }, [startFileTransfer]);
+      channel.send(JSON.stringify({ type: "transfer-complete" }));
+      setIsCompleted(true);
+    },
+    [sendFileWithBackpressure]
+  );
+
+  const initializeWebRTC = useCallback(
+    async (targetDeviceId: string) => {
+      if (pcRef.current) {
+        pcRef.current.close();
+      }
+
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      });
+      pcRef.current = pc;
+
+      const dataChannel = pc.createDataChannel("fileTransfer", { ordered: true });
+      dataChannel.binaryType = "arraybuffer";
+      dataChannelRef.current = dataChannel;
+
+      dataChannel.onopen = () => {
+        startFileTransfer(dataChannel);
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && socketRef.current) {
+          socketRef.current.sendSignal(targetDeviceId, {
+            type: "candidate",
+            candidate: event.candidate,
+          });
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socketRef.current?.sendSignal(targetDeviceId, offer);
+    },
+    [startFileTransfer]
+  );
 
   useEffect(() => {
     const socket = new EasyTransferSocket({
       onConnected: (id) => console.log("Sender Socket Connected:", id),
       onDevicesUpdated: (updatedDevices: Device[]) => {
         setDevices(updatedDevices);
-        // Clean up connected device if it disappeared from nearby list
-        if (connectedDevice && !updatedDevices.some((d) => d.id === connectedDevice.id)) {
+        if (
+          connectedDeviceRef.current &&
+          !updatedDevices.some((d) => d.id === connectedDeviceRef.current?.id)
+        ) {
           resetAllState();
         }
       },
       onTransferResponse: (senderId, accepted) => {
-        if (accepted && connectedDevice) {
-          initializeWebRTC(connectedDevice.id);
+        const activeDevice = connectedDeviceRef.current;
+        if (accepted && activeDevice) {
+          initializeWebRTC(activeDevice.id);
         } else {
           if (pcRef.current) {
             pcRef.current.close();
@@ -164,24 +189,30 @@ export default function SendPanel() {
       onSignal: async (senderId, signalData: any) => {
         if (!pcRef.current) return;
 
-        if (signalData.type === "answer") {
-          await pcRef.current.setRemoteDescription(new RTCSessionDescription(signalData));
-        } else if (signalData.type === "candidate") {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+        try {
+          if (signalData.type === "answer") {
+            await pcRef.current.setRemoteDescription(
+              new RTCSessionDescription(signalData)
+            );
+          } else if (signalData.type === "candidate" || signalData.candidate) {
+            const cand = signalData.candidate || signalData;
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+          }
+        } catch (err) {
+          console.error("Signaling error:", err);
         }
       },
-      onError: (err) => console.error("Signaling error:", err),
+      onError: (err) => console.error("Signaling socket error:", err),
     });
 
     socketRef.current = socket;
     socket.connect();
 
     return () => {
-      // Explicit socket cleanup prevents stale ghost devices on the server
       socket.disconnect();
       if (pcRef.current) pcRef.current.close();
     };
-  }, [connectedDevice, initializeWebRTC, resetAllState]);
+  }, [initializeWebRTC, resetAllState]);
 
   const generateVerificationCode = () => {
     if (!connectedDevice || files.length === 0) return;
@@ -287,7 +318,7 @@ export default function SendPanel() {
         )}
 
         {transferProgress !== null && (
-          <div className="mt-8 mx-auto max-w-[450px] rounded-[10px] bg-[#15303D] p-6 text-left">
+          <div className="mx-auto mt-8 max-w-[450px] rounded-[10px] bg-[#15303D] p-6 text-left">
             <p className="truncate text-sm font-semibold text-white">
               {currentSendingFile || "Preparing transfer..."}
             </p>
