@@ -3,12 +3,17 @@ import { WebSocketServer, WebSocket } from "ws";
 // Read the port dynamically injected by hosting platforms (e.g., Render) or fall back to 3001 locally
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 
+// Extend standard WebSocket to track health checks
+interface ExtWebSocket extends WebSocket {
+  isAlive?: boolean;
+}
+
 export type Device = {
   id: string;
   name: string;
   platform: string;
   browser: string;
-  socket: WebSocket;
+  socket: ExtWebSocket;
 };
 
 const devices = new Map<string, Device>();
@@ -69,9 +74,17 @@ function broadcastDevices() {
   });
 }
 
-server.on("connection", (socket: WebSocket) => {
+server.on("connection", (socket: ExtWebSocket) => {
   const deviceId = generateDeviceId();
   console.log(`New device socket connected assigned temp ID: ${deviceId}`);
+
+  // Mark connection alive initially
+  socket.isAlive = true;
+
+  // Track native WebSocket pong responses
+  socket.on("pong", () => {
+    socket.isAlive = true;
+  });
 
   // Transmit assigned ID back to peer on connect
   socket.send(
@@ -211,4 +224,29 @@ server.on("connection", (socket: WebSocket) => {
     console.error(`Socket error on device ${deviceId}:`, error);
     handleCleanup();
   });
+});
+
+
+const interval = setInterval(() => {
+  server.clients.forEach((ws: ExtWebSocket) => {
+    if (ws.isAlive === false) {
+      // Find associated device and clean up before terminating
+      for (const [id, device] of devices.entries()) {
+        if (device.socket === ws) {
+          console.log(`Pruned ghost device: ${device.name} (${id})`);
+          devices.delete(id);
+          break;
+        }
+      }
+      broadcastDevices();
+      return ws.terminate();
+    }
+
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 3000);
+
+server.on("close", () => {
+  clearInterval(interval);
 });
