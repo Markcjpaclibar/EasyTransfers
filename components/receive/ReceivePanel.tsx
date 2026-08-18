@@ -73,8 +73,9 @@ export default function ReceivePanel() {
       if (candidate) {
         try {
           await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log("[WebRTC] Processed queued ICE candidate");
         } catch (err) {
-          console.error("Error adding ICE candidate:", err);
+          console.error("[WebRTC] Error adding queued ICE candidate:", err);
         }
       }
     }
@@ -82,6 +83,8 @@ export default function ReceivePanel() {
 
   const createPeerConnection = useCallback((targetSenderId: string) => {
     if (pcRef.current) return pcRef.current;
+
+    console.log("[WebRTC] Creating Peer Connection for sender:", targetSenderId);
 
     const pc = new RTCPeerConnection({
       iceServers: [
@@ -93,6 +96,7 @@ export default function ReceivePanel() {
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
+        console.log("[WebRTC] Sending ICE Candidate to sender");
         socketRef.current.sendSignal(targetSenderId, {
           type: "candidate",
           candidate: event.candidate,
@@ -100,9 +104,17 @@ export default function ReceivePanel() {
       }
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log("[WebRTC] ICE Connection State:", pc.iceConnectionState);
+    };
+
     pc.ondatachannel = (event) => {
+      console.log("[WebRTC] Data Channel received from sender");
       const receiveChannel = event.channel;
       receiveChannel.binaryType = "arraybuffer";
+
+      receiveChannel.onopen = () => console.log("[WebRTC] Data Channel opened!");
+      receiveChannel.onclose = () => console.log("[WebRTC] Data Channel closed!");
 
       receiveChannel.onmessage = (e) => {
         if (typeof e.data === "string") {
@@ -153,18 +165,18 @@ export default function ReceivePanel() {
     const pc = createPeerConnection(targetSenderId);
 
     try {
-      if (pc.signalingState !== "stable") {
-        await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
-      }
+      console.log("[WebRTC] Setting Remote Description (Offer)...");
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       await processBufferedCandidates();
 
+      console.log("[WebRTC] Creating Answer...");
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
+      console.log("[WebRTC] Sending Answer to sender...");
       socketRef.current?.sendSignal(targetSenderId, answer);
     } catch (err) {
-      console.error("Error creating/sending WebRTC Answer:", err);
+      console.error("[WebRTC] Error during offer/answer exchange:", err);
     }
   };
 
@@ -196,6 +208,7 @@ export default function ReceivePanel() {
       onConnected: (id) => console.log("Receiver Socket Connected:", id),
       onRegistered: (device) => setMe(device),
       onTransferRequest: (fromId, metadata: any) => {
+        console.log("Incoming transfer request from:", fromId, metadata);
         setSenderId(fromId);
         setRequestMeta({
           fileName: metadata.fileName || "File",
@@ -210,22 +223,26 @@ export default function ReceivePanel() {
         }
       },
       onSignal: async (fromId, signalData: any) => {
+        console.log("Received Signal:", signalData.type || "candidate", "from:", fromId);
+
         if (signalData.type === "offer") {
           pendingOfferRef.current = signalData;
 
-          // If transfer is already accepted by user, process answer immediately
           if (isAcceptedRef.current) {
             await handleOfferAndAnswer(fromId, signalData);
           }
-        } else if (signalData.type === "candidate") {
+        } else if (signalData.type === "candidate" || signalData.candidate) {
+          const candidateData = signalData.candidate || signalData;
           if (pcRef.current && pcRef.current.remoteDescription) {
             try {
-              await pcRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(candidateData));
+              console.log("[WebRTC] Added ICE Candidate");
             } catch (err) {
-              console.error("Error adding candidate:", err);
+              console.error("[WebRTC] Error adding ICE candidate:", err);
             }
           } else {
-            iceCandidatesQueueRef.current.push(signalData.candidate);
+            console.log("[WebRTC] Buffering ICE Candidate");
+            iceCandidatesQueueRef.current.push(candidateData);
           }
         }
       },
@@ -255,6 +272,7 @@ export default function ReceivePanel() {
     setIsTransferring(true);
 
     if (senderId) {
+      console.log("Sending Transfer Accept response to:", senderId);
       socketRef.current?.sendTransferResponse(senderId, true);
 
       if (pendingOfferRef.current) {
