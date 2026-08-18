@@ -42,6 +42,7 @@ export default function ReceivePanel() {
   const receivedSizeRef = useRef<number>(0);
   const pendingOfferRef = useRef<RTCSessionDescriptionInit | null>(null);
   const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const isAcceptedRef = useRef<boolean>(false);
 
   const downloadCurrentFile = () => {
     const file = activeFileRef.current;
@@ -73,7 +74,7 @@ export default function ReceivePanel() {
         try {
           await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
-          console.error("Error adding queued ICE candidate:", err);
+          console.error("Error adding ICE candidate:", err);
         }
       }
     }
@@ -148,6 +149,25 @@ export default function ReceivePanel() {
     return pc;
   }, []);
 
+  const handleOfferAndAnswer = async (targetSenderId: string, offer: RTCSessionDescriptionInit) => {
+    const pc = createPeerConnection(targetSenderId);
+
+    try {
+      if (pc.signalingState !== "stable") {
+        await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
+      }
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      await processBufferedCandidates();
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      socketRef.current?.sendSignal(targetSenderId, answer);
+    } catch (err) {
+      console.error("Error creating/sending WebRTC Answer:", err);
+    }
+  };
+
   const resetAllState = useCallback(() => {
     setRequestMeta(null);
     setSenderId(null);
@@ -158,6 +178,7 @@ export default function ReceivePanel() {
     setIsCompleted(false);
     setCurrentFile(null);
 
+    isAcceptedRef.current = false;
     receivedChunksRef.current = [];
     receivedSizeRef.current = 0;
     activeFileRef.current = null;
@@ -191,13 +212,18 @@ export default function ReceivePanel() {
       onSignal: async (fromId, signalData: any) => {
         if (signalData.type === "offer") {
           pendingOfferRef.current = signalData;
-          if (pcRef.current) {
-            await pcRef.current.setRemoteDescription(new RTCSessionDescription(signalData));
-            await processBufferedCandidates();
+
+          // If transfer is already accepted by user, process answer immediately
+          if (isAcceptedRef.current) {
+            await handleOfferAndAnswer(fromId, signalData);
           }
         } else if (signalData.type === "candidate") {
           if (pcRef.current && pcRef.current.remoteDescription) {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+            try {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+            } catch (err) {
+              console.error("Error adding candidate:", err);
+            }
           } else {
             iceCandidatesQueueRef.current.push(signalData.candidate);
           }
@@ -216,23 +242,32 @@ export default function ReceivePanel() {
         pcRef.current = null;
       }
     };
-  }, []);
+  }, [createPeerConnection]);
 
-  const startWebRTCAndAccept = async (targetSenderId: string) => {
-    const pc = createPeerConnection(targetSenderId);
-
-    // Tell the sender we accepted
-    socketRef.current?.sendTransferResponse(targetSenderId, true);
-
-    if (pendingOfferRef.current) {
-      if (!pc.remoteDescription) {
-        await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
-      }
-      await processBufferedCandidates();
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socketRef.current?.sendSignal(targetSenderId, answer);
+  const handleAccept = async () => {
+    const enteredPin = pin.join("");
+    if (enteredPin.length < 4 || (expectedCode && enteredPin !== expectedCode)) {
+      setPinError(true);
+      return;
     }
+
+    isAcceptedRef.current = true;
+    setIsTransferring(true);
+
+    if (senderId) {
+      socketRef.current?.sendTransferResponse(senderId, true);
+
+      if (pendingOfferRef.current) {
+        await handleOfferAndAnswer(senderId, pendingOfferRef.current);
+      }
+    }
+  };
+
+  const handleDecline = () => {
+    if (senderId) {
+      socketRef.current?.sendTransferResponse(senderId, false);
+    }
+    resetAllState();
   };
 
   const handlePinChange = (index: number, value: string) => {
@@ -252,26 +287,6 @@ export default function ReceivePanel() {
     if (e.key === "Backspace" && !pin[index] && index > 0) {
       pinInputRefs.current[index - 1]?.focus();
     }
-  };
-
-  const handleAccept = async () => {
-    const enteredPin = pin.join("");
-    if (enteredPin.length < 4 || (expectedCode && enteredPin !== expectedCode)) {
-      setPinError(true);
-      return;
-    }
-
-    setIsTransferring(true);
-    if (senderId) {
-      await startWebRTCAndAccept(senderId);
-    }
-  };
-
-  const handleDecline = () => {
-    if (senderId) {
-      socketRef.current?.sendTransferResponse(senderId, false);
-    }
-    resetAllState();
   };
 
   const formatFileSize = (bytes: number) => {
