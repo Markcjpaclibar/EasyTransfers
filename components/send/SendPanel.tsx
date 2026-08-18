@@ -24,6 +24,21 @@ type Device = {
 const CHUNK_SIZE = 64 * 1024; // 64KB optimal chunk size
 const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024; // 8MB backpressure limit
 
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+];
+
 export default function SendPanel() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -42,7 +57,6 @@ export default function SendPanel() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
 
-  // Sync state to Refs to eliminate React async closure traps
   const filesRef = useRef<File[]>([]);
   const connectedDeviceRef = useRef<Device | null>(null);
 
@@ -127,19 +141,20 @@ export default function SendPanel() {
         pcRef.current.close();
       }
 
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
-      });
+      console.log("[SENDER] Creating Peer Connection...");
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pcRef.current = pc;
+
+      pc.oniceconnectionstatechange = () => {
+        console.log("[SENDER WebRTC State]:", pc.iceConnectionState);
+      };
 
       const dataChannel = pc.createDataChannel("fileTransfer", { ordered: true });
       dataChannel.binaryType = "arraybuffer";
       dataChannelRef.current = dataChannel;
 
       dataChannel.onopen = () => {
+        console.log("[SENDER] Data Channel Open. Sending files...");
         startFileTransfer(dataChannel);
       };
 

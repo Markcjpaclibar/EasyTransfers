@@ -19,6 +19,21 @@ type ActiveFile = {
   type: string;
 };
 
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+];
+
 export default function ReceivePanel() {
   const [me, setMe] = useState<Device | null>(null);
   const [senderId, setSenderId] = useState<string | null>(null);
@@ -85,12 +100,11 @@ export default function ReceivePanel() {
     if (pcRef.current) return pcRef.current;
 
     console.log("[RECEIVER] Creating Peer Connection...");
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("[RECEIVER WebRTC State]:", pc.iceConnectionState);
+    };
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
