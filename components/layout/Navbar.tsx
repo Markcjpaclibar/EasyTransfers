@@ -15,7 +15,7 @@ export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <nav className="relative z-50 border-b border-white/[0.08] bg-[#111A2E]/90 backdrop-blur-md">
+    <nav className="sticky top-0 z-50 border-b border-white/[0.08] bg-[#111A2E]/90 backdrop-blur-md">
       <div className="mx-auto flex h-[68px] max-w-[1200px] items-center justify-between px-6 sm:px-8 lg:px-10">
         {/* Logo */}
         <Link
@@ -68,7 +68,7 @@ export default function Navbar() {
           ))}
         </div>
 
-        {/* Mobile Menu Button with Hover & Focus State */}
+        {/* Mobile Menu Button */}
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
@@ -79,11 +79,14 @@ export default function Navbar() {
             items-center
             justify-center
             rounded-lg
+            border
+            border-white/[0.08]
+            bg-white/[0.03]
             text-[#CBD5E1]
             transition-all
             duration-200
-            hover:scale-105
-            hover:bg-[#22D3EE]/15
+            hover:border-[#22D3EE]/40
+            hover:bg-[#22D3EE]/20
             hover:text-[#22D3EE]
             active:scale-95
             focus:outline-none
@@ -95,14 +98,14 @@ export default function Navbar() {
           aria-expanded={isOpen}
         >
           {isOpen ? (
-            <X size={23} strokeWidth={1.8} className="transition-transform duration-200" />
+            <X size={21} strokeWidth={2} className="transition-transform duration-200" />
           ) : (
-            <Menu size={23} strokeWidth={1.8} className="transition-transform duration-200" />
+            <Menu size={21} strokeWidth={2} className="transition-transform duration-200" />
           )}
         </button>
       </div>
 
-      {/* Mobile Navigation (Absolute Positioned Overlay) */}
+      {/* Mobile Navigation (Overlay attached to sticky header) */}
       <div
         className={`
           absolute
@@ -112,7 +115,7 @@ export default function Navbar() {
           border-b
           border-white/[0.08]
           bg-[#0D1729]/95
-          shadow-xl
+          shadow-2xl
           backdrop-blur-xl
           transition-all
           duration-300
@@ -138,7 +141,7 @@ export default function Navbar() {
                 text-[#CBD5E1]
                 transition-all
                 duration-200
-                hover:bg-[#22D3EE]/[0.08]
+                hover:bg-[#22D3EE]/[0.12]
                 hover:pl-6
                 hover:text-[#22D3EE]
               "
