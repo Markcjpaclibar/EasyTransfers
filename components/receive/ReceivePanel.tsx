@@ -44,7 +44,7 @@ export default function ReceivePanel() {
   const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
   const isAcceptedRef = useRef<boolean>(false);
 
-  const downloadCurrentFile = () => {
+  const downloadCurrentFile = useCallback(() => {
     const file = activeFileRef.current;
     if (!file || receivedChunksRef.current.length === 0) return;
 
@@ -64,7 +64,7 @@ export default function ReceivePanel() {
     receivedChunksRef.current = [];
     receivedSizeRef.current = 0;
     activeFileRef.current = null;
-  };
+  }, []);
 
   const processBufferedCandidates = async () => {
     if (!pcRef.current || !pcRef.current.remoteDescription) return;
@@ -107,6 +107,10 @@ export default function ReceivePanel() {
       const receiveChannel = event.channel;
       receiveChannel.binaryType = "arraybuffer";
 
+      receiveChannel.onopen = () => {
+        console.log("[RECEIVER] Data Channel Open & Ready");
+      };
+
       receiveChannel.onmessage = (e) => {
         if (typeof e.data === "string") {
           try {
@@ -135,15 +139,16 @@ export default function ReceivePanel() {
         receivedSizeRef.current += chunk.byteLength;
 
         const totalSize = activeFileRef.current?.size || 1;
-        setProgress(Math.min(100, Math.round((receivedSizeRef.current / totalSize) * 100)));
+        const currentProgress = Math.min(100, Math.round((receivedSizeRef.current / totalSize) * 100));
+        setProgress(currentProgress);
       };
     };
 
     pcRef.current = pc;
     return pc;
-  }, []);
+  }, [downloadCurrentFile]);
 
-  const handleOfferAndAnswer = async (targetSenderId: string, offer: RTCSessionDescriptionInit) => {
+  const handleOfferAndAnswer = useCallback(async (targetSenderId: string, offer: RTCSessionDescriptionInit) => {
     const pc = createPeerConnection(targetSenderId);
     try {
       console.log("[RECEIVER] Setting Remote Description (Offer)");
@@ -158,7 +163,7 @@ export default function ReceivePanel() {
     } catch (err) {
       console.error("[RECEIVER] WebRTC Handshake Error:", err);
     }
-  };
+  }, [createPeerConnection]);
 
   const resetAllState = useCallback(() => {
     setRequestMeta(null);
@@ -231,7 +236,7 @@ export default function ReceivePanel() {
       socket.disconnect();
       if (pcRef.current) pcRef.current.close();
     };
-  }, [createPeerConnection]);
+  }, [handleOfferAndAnswer]);
 
   const handleAccept = async () => {
     const enteredPin = pin.join("");
