@@ -65,70 +65,17 @@ export default function ReceivePanel() {
     activeFileRef.current = null;
   };
 
-  useEffect(() => {
-    const socket = new EasyTransferSocket({
-      onConnected: (id) => console.log("Receiver Socket Connected:", id),
-      onRegistered: (device) => setMe(device),
-      onTransferRequest: (fromId, metadata: any) => {
-        setSenderId(fromId);
-        setRequestMeta({
-          fileName: metadata.fileName || "File",
-          fileSize: metadata.fileSize || 0,
-          fileType: metadata.fileType || "application/octet-stream",
-          totalFiles: metadata.totalFiles || 1,
-          senderName: metadata.senderName || "Sender Device",
-        });
-
-        if (metadata.code) {
-          setExpectedCode(String(metadata.code));
-        }
-      },
-      onSignal: async (fromId, signalData: any) => {
-        if (signalData.type === "offer") {
-          pendingOfferRef.current = signalData;
-          if (pcRef.current) {
-            await pcRef.current.setRemoteDescription(new RTCSessionDescription(signalData));
-            processBufferedCandidates();
-          }
-        } else if (signalData.type === "candidate") {
-          if (pcRef.current && pcRef.current.remoteDescription) {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(signalData.candidate));
-          } else {
-            iceCandidatesQueueRef.current.push(signalData.candidate);
-          }
-        }
-      },
-    });
-
-    socketRef.current = socket;
-    socket.connect();
-
-    return () => {
-      socket.disconnect();
-      if (pcRef.current) pcRef.current.close();
-    };
-  }, []);
-
-  const processBufferedCandidates = async () => {
-    if (!pcRef.current) return;
-    while (iceCandidatesQueueRef.current.length > 0) {
-      const candidate = iceCandidatesQueueRef.current.shift();
-      if (candidate) {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-      }
-    }
-  };
-
-  const startWebRTCAndAccept = async (targetSenderId: string) => {
-    socketRef.current?.sendTransferResponse(targetSenderId, true);
+  // Create PeerConnection instance with public STUN servers
+  const createPeerConnection = (targetSenderId: string) => {
+    if (pcRef.current) return pcRef.current;
 
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
       ],
     });
-    pcRef.current = pc;
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
@@ -184,8 +131,76 @@ export default function ReceivePanel() {
       };
     };
 
+    pcRef.current = pc;
+    return pc;
+  };
+
+  useEffect(() => {
+    const socket = new EasyTransferSocket({
+      onConnected: (id) => console.log("Receiver Socket Connected:", id),
+      onRegistered: (device) => setMe(device),
+      onTransferRequest: (fromId, metadata: any) => {
+        setSenderId(fromId);
+        setRequestMeta({
+          fileName: metadata.fileName || "File",
+          fileSize: metadata.fileSize || 0,
+          fileType: metadata.fileType || "application/octet-stream",
+          totalFiles: metadata.totalFiles || 1,
+          senderName: metadata.senderName || "Sender Device",
+        });
+
+        if (metadata.code) {
+          setExpectedCode(String(metadata.code));
+        }
+
+        // Initialize Peer Connection immediately on request
+        createPeerConnection(fromId);
+      },
+      onSignal: async (fromId, signalData: any) => {
+        const pc = pcRef.current || createPeerConnection(fromId);
+
+        if (signalData.type === "offer") {
+          pendingOfferRef.current = signalData;
+          await pc.setRemoteDescription(new RTCSessionDescription(signalData));
+          await processBufferedCandidates();
+        } else if (signalData.type === "candidate") {
+          if (pc.remoteDescription) {
+            await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+          } else {
+            iceCandidatesQueueRef.current.push(signalData.candidate);
+          }
+        }
+      },
+    });
+
+    socketRef.current = socket;
+    socket.connect();
+
+    return () => {
+      socket.disconnect();
+      if (pcRef.current) pcRef.current.close();
+    };
+  }, []);
+
+  const processBufferedCandidates = async () => {
+    if (!pcRef.current) return;
+    while (iceCandidatesQueueRef.current.length > 0) {
+      const candidate = iceCandidatesQueueRef.current.shift();
+      if (candidate) {
+        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    }
+  };
+
+  const startWebRTCAndAccept = async (targetSenderId: string) => {
+    socketRef.current?.sendTransferResponse(targetSenderId, true);
+
+    const pc = pcRef.current || createPeerConnection(targetSenderId);
+
     if (pendingOfferRef.current) {
-      await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
+      if (!pc.remoteDescription) {
+        await pc.setRemoteDescription(new RTCSessionDescription(pendingOfferRef.current));
+      }
       await processBufferedCandidates();
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -379,7 +394,7 @@ export default function ReceivePanel() {
             <CheckCircle className="text-[#00E5FF]" size={52} />
             <h2 className="mt-3 text-[20px] font-bold text-white">Transfer Complete!</h2>
             <p className="mt-1 text-[13px] text-[#8EA0B5]">
-              All files have been saved to your downloads.
+              All files have been saved to your downloads
             </p>
             <button
               type="button"
