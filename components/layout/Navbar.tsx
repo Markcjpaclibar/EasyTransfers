@@ -15,7 +15,7 @@ export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <nav className="relative z-50 border-b border-white/[0.04] bg-[#111A2E]">
+    <nav className="relative z-50 border-b border-white/[0.08] bg-[#111A2E]/90 backdrop-blur-md">
       <div className="mx-auto flex h-[68px] max-w-[1200px] items-center justify-between px-6 sm:px-8 lg:px-10">
         {/* Logo */}
         <Link
@@ -68,7 +68,7 @@ export default function Navbar() {
           ))}
         </div>
 
-        {/* Mobile Menu Button */}
+        {/* Mobile Menu Button with Hover & Focus State */}
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
@@ -82,28 +82,46 @@ export default function Navbar() {
             text-[#CBD5E1]
             transition-all
             duration-200
-            hover:bg-[#22D3EE]/10
+            hover:scale-105
+            hover:bg-[#22D3EE]/15
             hover:text-[#22D3EE]
+            active:scale-95
+            focus:outline-none
+            focus:ring-2
+            focus:ring-[#22D3EE]/50
             md:hidden
           "
           aria-label="Toggle menu"
           aria-expanded={isOpen}
         >
           {isOpen ? (
-            <X size={23} strokeWidth={1.8} />
+            <X size={23} strokeWidth={1.8} className="transition-transform duration-200" />
           ) : (
-            <Menu size={23} strokeWidth={1.8} />
+            <Menu size={23} strokeWidth={1.8} className="transition-transform duration-200" />
           )}
         </button>
       </div>
 
-      {/* Mobile Navigation */}
+      {/* Mobile Navigation (Absolute Positioned Overlay) */}
       <div
-        className={`overflow-hidden border-t border-white/[0.04] bg-[#0D1729] transition-all duration-300 md:hidden ${
-          isOpen ? "max-h-[280px] opacity-100" : "max-h-0 opacity-0"
-        }`}
+        className={`
+          absolute
+          left-0
+          top-full
+          w-full
+          border-b
+          border-white/[0.08]
+          bg-[#0D1729]/95
+          shadow-xl
+          backdrop-blur-xl
+          transition-all
+          duration-300
+          ease-in-out
+          md:hidden
+          ${isOpen ? "visible max-h-[300px] opacity-100" : "invisible max-h-0 opacity-0 pointer-events-none"}
+        `}
       >
-        <div className="px-5 py-3">
+        <div className="flex flex-col gap-1 px-5 py-4">
           {navItems.map((item) => (
             <Link
               key={item.href}
@@ -114,14 +132,14 @@ export default function Navbar() {
                 items-center
                 rounded-lg
                 px-4
-                py-3.5
+                py-3
                 text-[14px]
                 font-medium
                 text-[#CBD5E1]
                 transition-all
                 duration-200
                 hover:bg-[#22D3EE]/[0.08]
-                hover:pl-5
+                hover:pl-6
                 hover:text-[#22D3EE]
               "
             >
