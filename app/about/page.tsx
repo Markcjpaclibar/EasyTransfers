@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Footer from "@/layout/footer";
 import {
   Wifi,
   Zap,
@@ -11,8 +12,6 @@ import {
   Globe,
   Lock,
   ArrowRight,
-  ShieldCheck,
-  Code2, // Replaced Github with Code2 or Globe
 } from "lucide-react";
 
 const steps = [
@@ -195,7 +194,6 @@ export default function AboutPage() {
                   "
                 >
                   <div>
-                    {/* Header Row */}
                     <div className="flex items-center justify-between">
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-[#CBD5E1] transition-colors group-hover:border-[#22D3EE]/30 group-hover:bg-[#22D3EE]/10 group-hover:text-[#22D3EE]">
                         <Icon size={20} />
@@ -206,7 +204,6 @@ export default function AboutPage() {
                       </span>
                     </div>
 
-                    {/* Title & Description */}
                     <h3 className="mt-5 text-[16px] font-semibold text-[#F8FAFC] transition-colors group-hover:text-[#22D3EE]">
                       {f.title}
                     </h3>
@@ -216,7 +213,6 @@ export default function AboutPage() {
                     </p>
                   </div>
 
-                  {/* Accent line */}
                   <div className="mt-6 h-[2px] w-full rounded-full bg-white/[0.06] transition-colors duration-300 group-hover:bg-[#22D3EE]/40" />
                 </div>
               );
@@ -252,48 +248,8 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* 5. FOOTER */}
-      <footer className="border-t border-white/[0.08] bg-[#080E1A] px-6 py-12 sm:px-8 sm:py-16">
-        <div className="mx-auto max-w-[1100px]">
-          <div className="flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
-            {/* Left Brand Details */}
-            <div>
-              <Link href="/" className="text-[18px] font-bold text-[#F8FAFC] hover:text-[#22D3EE]">
-                EasyTransfer
-              </Link>
-              <p className="mt-2 max-w-[320px] text-[13px] leading-relaxed text-[#64748B]">
-                Direct peer-to-peer web file sharing powered by WebRTC. Fast, private, and zero cloud footprint.
-              </p>
-            </div>
-
-            {/* Quick Links Navigation */}
-            <div className="flex flex-wrap items-center gap-6 text-[13px] font-medium text-[#94A3B8]">
-              <Link href="/" className="transition-colors hover:text-[#22D3EE]">
-                Home
-              </Link>
-              <Link href="/send" className="transition-colors hover:text-[#22D3EE]">
-                Send
-              </Link>
-              <Link href="/receive" className="transition-colors hover:text-[#22D3EE]">
-                Receive
-              </Link>
-              <Link href="/about" className="transition-colors hover:text-[#22D3EE]">
-                About
-              </Link>
-            </div>
-          </div>
-
-          {/* Bottom Row */}
-          <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/[0.06] pt-8 text-center text-[12px] text-[#64748B] sm:flex-row sm:text-left">
-            <p>© {new Date().getFullYear()} EasyTransfer. Built for seamless local sharing.</p>
-
-            <div className="flex items-center gap-2 text-[#94A3B8]">
-              <ShieldCheck size={16} className="text-[#22D3EE]" />
-              <span>Peer-to-Peer Encrypted</span>
-            </div>
-          </div>
-        </div>
-      </footer>
+      {/* 5. REUSABLE FOOTER */}
+      <Footer />
     </div>
   );
 }
