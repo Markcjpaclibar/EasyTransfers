@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import {
   Wifi,
@@ -90,6 +91,9 @@ const goals = [
 export default function AboutPage() {
   return (
     <div className="min-h-screen bg-[#0B1120] text-[#F8FAFC]">
+
+        <Navbar/>
+
       {/* 1. HERO SECTION */}
       <section className="relative overflow-hidden px-6 pt-20 pb-16 sm:px-8 sm:pt-28 sm:pb-20 lg:pt-32 lg:pb-24">
         <div className="mx-auto max-w-[900px] text-center">
@@ -99,7 +103,7 @@ export default function AboutPage() {
 
           <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-[#F8FAFC] sm:text-5xl lg:text-6xl">
             Direct File Transfers, <br className="hidden sm:inline" />
-            <span className="bg-gradient-to-r from-[#22D3EE] via-[#38BDF8] to-[#818CF8] bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-[#22D3EE] via-[#38BDF8] to-[#34D399] bg-clip-text text-transparent">
               Without the Cloud
             </span>
           </h1>
@@ -111,12 +115,6 @@ export default function AboutPage() {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-            <Link
-              href="/send"
-              className="inline-flex items-center gap-2 rounded-xl bg-[#22D3EE] px-6 py-3.5 text-[14px] font-semibold text-[#0B1120] transition-all hover:bg-[#06B6D4] active:scale-95"
-            >
-              Start Transferring <ArrowRight size={16} />
-            </Link>
           </div>
         </div>
       </section>

@@ -8,7 +8,7 @@ export default function Home() {
     <>
       <Navbar />
 
-      <main className="min-h-screen bg-[#171717] text-white">
+      <main className="min-h-screen bg-[#0B1120] text-white">
         <Hero />
         <Features />
       </main>
