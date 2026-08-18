@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import Footer from "@/layout/footer";
+import Footer from "@/components/layout/Footer";
 import {
   Wifi,
   Zap,
