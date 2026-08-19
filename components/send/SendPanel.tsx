@@ -27,6 +27,8 @@ const MAX_BUFFERED_AMOUNT = 8 * 1024 * 1024; // 8MB backpressure limit
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
   {
     urls: "turn:openrelay.metered.ca:80",
     username: "openrelayproject",
@@ -57,6 +59,9 @@ export default function SendPanel() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
 
+  // Queue to hold ICE candidates if they arrive before setRemoteDescription completes
+  const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
+
   const filesRef = useRef<File[]>([]);
   const connectedDeviceRef = useRef<Device | null>(null);
 
@@ -76,6 +81,7 @@ export default function SendPanel() {
     setIsCompleted(false);
     setCurrentSendingFile("");
     setShowDeclinedModal(false);
+    iceCandidatesQueueRef.current = [];
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
@@ -141,6 +147,7 @@ export default function SendPanel() {
         pcRef.current.close();
       }
 
+      iceCandidatesQueueRef.current = [];
       console.log("[SENDER] Creating Peer Connection...");
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pcRef.current = pc;
@@ -209,9 +216,23 @@ export default function SendPanel() {
             await pcRef.current.setRemoteDescription(
               new RTCSessionDescription(signalData)
             );
+
+            // Process any ICE candidates that arrived before the remote description was set
+            while (iceCandidatesQueueRef.current.length > 0) {
+              const candidate = iceCandidatesQueueRef.current.shift();
+              if (candidate) {
+                await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+              }
+            }
           } else if (signalData.type === "candidate" || signalData.candidate) {
             const cand = signalData.candidate || signalData;
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+            
+            if (pcRef.current.remoteDescription) {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+            } else {
+              // Remote description isn't ready yet, queue candidate
+              iceCandidatesQueueRef.current.push(cand);
+            }
           }
         } catch (err) {
           console.error("Signaling error:", err);

@@ -102,7 +102,7 @@ export default function AboutPage() {
           </span>
 
           <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-[#F8FAFC] sm:text-5xl lg:text-6xl">
-            Direct File Transfers, <br className="hidden sm:inline" />
+            Direct File Transfers,<br className="hidden sm:inline" />
             <span className="bg-gradient-to-r from-[#22D3EE] via-[#38BDF8] to-[#34D399] bg-clip-text text-transparent">
               Without the Cloud
             </span>
