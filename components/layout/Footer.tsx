@@ -15,7 +15,7 @@ export default function Footer() {
         {/* Social & Contact Links */}
         <div className="flex items-center gap-7">
           <Link
-            href="facebook.com/markcj1424"
+            href="https://www.facebook.com/share/1aWbtdZtkN/"
             aria-label="Facebook"
             className="text-[#94A3B8] transition-all duration-200 hover:-translate-y-1 hover:text-[#22D3EE]"
           >
