@@ -6,13 +6,12 @@ export default function Hero() {
       <div className="mx-auto w-full max-w-[1000px] pt-[85px] pb-[100px] sm:pt-[95px] sm:pb-[115px] lg:pt-[105px] lg:pb-[125px]">
         {/* Heading */}
         <div className="text-center">
-          <h1 className="text-[40px] font-bold leading-[1.1] tracking-[-0.035em] sm:text-[48px] lg:text-[54px]">
-            Share Directly
+          <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-[#F8FAFC] sm:text-5xl lg:text-6xl">
+            Share Directly, <br className="hidden sm:inline" />
+            <span className="bg-gradient-to-r from-[#22D3EE] via-[#38BDF8] to-[#34D399] bg-clip-text text-transparent">
+              Transfer Securely.
+            </span>
           </h1>
-
-            <h2 className="mt-3 bg-gradient-to-r from-[#22D3EE] to-[#34D399] bg-clip-text text-[37px] font-bold leading-[1.1] tracking-[-0.035em] text-transparent sm:text-[45px] lg:text-[51px]">
-            Transfer Securely.
-            </h2>
 
           <p className="mx-auto mt-6 max-w-[560px] text-[14px] leading-[1.55] text-[#94A3B8] sm:text-[15px] lg:text-[16px]">
             Transfer photos, videos, documents, and more
